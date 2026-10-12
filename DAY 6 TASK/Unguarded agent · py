@@ -1,0 +1,43 @@
+"""Day 6 task: the SAME agent with every guard switched off, for before/after comparison.
+
+No JSON check, no tool lookup check, no validation, no truncation retry, no repeat
+limit. Run it on the tempting-invalid-value question and compare with robust_agent.py.
+"""
+import json
+from config import client, MODEL, banner
+from tools_v2 import TOOLS, TOOL_FUNCTIONS
+from robust_agent import SYSTEM_PROMPT, QUESTIONS
+
+
+def unguarded_agent(question, max_steps=6):
+    messages = [{"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": question}]
+    for step in range(1, max_steps + 1):
+        response = client.chat.completions.create(
+            model=MODEL, messages=messages, tools=TOOLS, temperature=0, max_tokens=500)
+        message = response.choices[0].message
+        if not message.tool_calls:
+            return (message.content or "").strip(), step
+        messages.append({
+            "role": "assistant", "content": message.content or "",
+            "tool_calls": [{"id": c.id, "type": "function",
+                            "function": {"name": c.function.name,
+                                         "arguments": c.function.arguments}}
+                           for c in message.tool_calls]})
+        for call in message.tool_calls:
+            arguments = json.loads(call.function.arguments)           # may raise
+            result = TOOL_FUNCTIONS[call.function.name](**arguments)  # may raise
+            print(f"    {call.function.name}({arguments}) -> {result}")
+            messages.append({"role": "tool", "tool_call_id": call.id, "content": str(result)})
+    return "Stopped: maximum steps reached without a final answer.", max_steps
+
+
+if __name__ == "__main__":
+    banner("UNGUARDED AGENT (guards OFF)")
+    for label, question in QUESTIONS:
+        print(f"\n[{label}]\nQ: {question}")
+        try:
+            answer, steps = unguarded_agent(question)
+            print("A:", answer, f"(steps={steps})")
+        except Exception as error:
+            print(f"CRASHED: {type(error).__name__}: {error}")
